@@ -149,3 +149,96 @@ def view_expenses():
     console.print(table)
 
 # TOTAL SPENT
+
+def total_spent():
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(amount) FROM expenses")
+    result = cursor.fetchone()[0] # fetchone() gets a single now and [0] gets the first value
+    conn.close()
+
+    total = result if result else 0 # If no expenses yet, default value to 0
+    console.print(f"\n[bold green]Total spent: ${total:.2f}[/bold green]")
+
+# FILTER BY CATEGORY
+
+def filter_by_category():
+    category = input("\nEnter category to filter(Food/Transport/Bills/Shopping/Health/Entertainment/Other): ").strip()
+
+    conn = connect()
+    cursor = conn.cursor()
+
+    # The ? safely inserts category variable into the SQL query
+    cursor.execute("SELECT * FROM expenses WHERE category = ? ORDER BY date DESC", (category,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        console.print(f"[yellow]No expenses found in category: {category}[/yellow]")
+        return
+    
+    table = Table(title=f"Expenses - {category}", box=box.ROUNDED, show_lines=True)
+    table.add_column("Date", style="cyan")
+    table.add_column("Description")
+    table.add_column("Amount", style="green", justify="right")
+
+    total = 0
+    for row in rows:
+        table.add_row(row["date"], row["description"], f"${row['amount']:.2f}")
+        total += row["amount"]
+
+        console.print(table)
+        console.print(f"[bold green]Total for {category}: ${total:.2f}[/bold green]")
+
+# DASHBOARD
+
+def show_dashboard():
+    conn = connect()
+    cursor = conn.cursor()
+
+    # Get total spent
+    cursor.execute("SELECT SUM(amount) FROM expenses")
+    total = cursor.fetchone()[0] or 0
+
+    # Get spending by category
+    cursor.execute("SELECT category, SUM(amount) as total FROM expenses GROUP BY category ORDER BY total DESC")
+    by_category = cursor.fetchall()
+
+    # Get the 5 most recent expenses
+    cursor.execute("SELECT * FROM expenses ORDER BY date DESC LIMIT 5")
+    recent = cursor.fetchall()
+
+    conn.close()
+
+    console.print(Panel(f"[bold green]Total spent: ${total:.2f}[/bold green]", title="Epense Dashboard"))
+
+    # Category breakdown table
+    if by_category:
+        cat_table = Table(title="Spending by Category", box=box.SIMPLE)
+        cat_table.add_column("Category", style="magenta")
+        cat_table.add_column("Total", style="green", justify="right")
+        cat_table.add_column("% of Spending", justify="right")
+
+        for row in by_category:
+            pct = (row["total"] / total * 100) if total > 0 else 0
+            cat_table.add_row(row["category"], f"${row['total']:.2f}", f"{pct:.1f}%")
+
+            console.print(cat_table)
+
+    # Recent expenses table
+    if recent:
+        recent_table = Table(title="5 Most Recent Expenses", box=box.SIMPLE)
+        recent_table.add_column("Date", style="cyan")
+        recent_table.add_column("Category", style="magenta")
+        recent_table.add_column("Description")
+        recent_table.add_column("Amount", style="green", justify="right")
+
+        for row in recent:
+            recent_table.add_row(row["date"], row["category"], row["description"], f"${row['amount']:.2f}")
+
+            console.print(recent_table)
+
+# AI FEATURES
+
+
+                                
