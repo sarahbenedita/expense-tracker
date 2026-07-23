@@ -240,5 +240,219 @@ def show_dashboard():
 
 # AI FEATURES
 
+def get_all_expenses_as_text():
+    # Converts all database rows into plain text to send to Claude
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM expenses ORDER BY date")
+    rows = cursor.fetchall()
+    conn.close()
 
-                                
+    if not rows:
+        return "No expenses recorded yet."
+    
+    lines = ["date, category, description, amount"]
+    for row in rows:
+        lines.append(f"{row['date']}, {row['category']}, {row['description']}, ${row['amount']:.2f}")
+    return "\n".join(lines)
+
+def natural_language_query():
+    # Lets the user ask questions in plain English
+    console.print("\n[bold yan]--- Ask About Your Expenses ---[/bold cyan]")
+    console.print("[dim]Example: How much did I spend on food? What was my biggest expense?[/dim]")
+
+    question = input("Your question: ").strip()
+    if not question:
+        return
+    
+    expenses_text = get_all_expenses_as_text()
+    client = get_ai_client()
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Here is my expense data:\n{expenses_text}\n\n"
+                f"Answer this question clearly and concisely: {question}"
+            )
+        }]
+    )
+
+    console.print(f"\n[green]{response.content[0].text}[/green]")
+
+def ai_spending_insights():
+    # Asks Claude to analyze all expenses and give personalized tips
+    console.print("\n[bold cyan]--- AI Spending Insights ---[/bold cyan]")
+
+    expenses_text = get_all_expenses_as_text()
+    client = get_ai_client()
+
+    console.print("[dim]Analyzing your spending...[/dim]")
+
+    response = client.messages.create(
+        model="claude-haiku-4-5-2025-1001",
+        max_tokens=400,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Here is my expense data:\n{expenses_text}\n\n"
+                f"Give me 3 short, friendly, specific insights about my spending habits. "
+                f"Point out patterns, biggest categories, and one tip to save money. "
+                f"Keep it simple and encouraging."
+            )
+        }]
+    )
+
+    console.print(Panel(response.content[0].text, title="Your AI Insights", border_style="cyan"))
+
+# MONTHLY REPORT & PDF EXPORT
+
+def generate_monthly_report():
+    console.print("\n[bold cyan]--- Monthly Report ---[/bold cyan]")
+
+    # Ask which month/year to report on
+    year = input("Year (e.g. 2026): ").strip()
+    month = input("Month number (e.g. 7 for July): ").strip()
+
+    try:
+        year = int(year)
+        month = int(month)
+    except ValueError:
+        console.print("[red]Invalid year or month.[/red]")
+        return
+    
+    month_name = calendar.month_name[month]
+
+    # Fetch all expenses for that month using SQL LIKE pattern matching
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM expenses WHERE date LIKE ? ORDER BY date",
+        (f"{year}-{month:02d}-%",)
+    )
+    rows = cursor.fetchall()
+
+    # Get category totals for this month
+    cursor.execute(
+        "SELECT category, SUM(amount) as total FROM expenses WHERE date LIKE ? GROUP BY category ORDER BY total DESC",
+        (f"{year}-{month:02}-%",)
+    )
+    by_category = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        console.print(f"[yellow]No expenses found for {month_name} {year}.[/yellow]")
+        return
+    
+    total = sum(row["amount"] for row in rows)
+
+    # Print report to terminal
+    console.print(f"\n[bold]Monthly Report - {month_name} {year}[/bold]")
+
+    table = Table(box=box.ROUNDED, show_lines=True)
+    table.add_coumn("Date", style="cyan")
+    table.add_column("Category", style="magenta")
+    table.add_column("Description")
+    table.add_column("Amount", style="green", justify="right")
+
+    for row in rows:
+        table.add_row(row["data"], row["category"], row["description"], f"${row['amount']:.2f}")
+
+    console.print(table)
+    console.print(f"[bold green]Total for {month_name} {year}: ${total:.2f}[/bold green]")
+
+    # Ask if user would like a PDF
+    save_pdf = input("\nExport as PDF? (y/n): ").strip().lower()
+    if save_pdf == "y":
+        export_pdf(rows, by_category, total, month_name, year)
+
+def export_pdf(rows, by_category, total, month_name, year):
+    # Creates a PDF file of the monthly report using the fpdf2 library
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+
+    # Title
+    pdf.cell(0, 10, f"Expense Report - {month_name} {year}", ln=True, align="C")
+    pdf.ln(5)
+
+    # Summary Section
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, f"Total Spent: ${total:.2f}", ln=True)
+    pdf.ln(3)
+
+    # Category breakdown
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "Spending by Category:", ln=True)
+    pdf.set_font("Helvetica", size=10)
+    for row in by_category:
+        pdf.cell(0, 7, f" {row['category']}: ${row['total']:.2f}", ln=True)
+    pdf.ln(5)
+
+    # Expense table header
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(35, 8, "Date", border=1)
+    pdf.cell(40, 8, "Category", border=1)
+    pdf.cell(75, 8, "Description", border=1)
+    pdf.cell(35, 8, "Amount", border=1, align="R")
+    pdf.ln()
+
+    # Expense rows
+    pdf.set_font("Helvetica", size=10)
+    for row in rows:
+        pdf.cell(35, 7, row["date"], border=1)
+        pdf.cell(40, 7, row["category"], border=1)
+        pdf.cell(75, 7, row["description"][:40], border=1) # Truncate long descriptions
+        pdf.cell(35, 7, f"${row['amount']:.2f}", border=1, align="R")
+        pdf.ln()
+
+    # Save the PDF file
+    filename = f"report_{month_name}_{year}.pdf"
+    pdf.output(filename)
+    console.print(f"[green]PDF saved as: {filename}[/green]")
+
+# MAIN MENU
+
+def main():
+    create_table() # Set up the database on first run
+
+    while True:
+        console.print("\n[bold cyan]--- Expense Tracker ---[/bold cyan]")
+        console.print("1. Add expense")
+        console.print("2. View all expenses")
+        console.print("3. Filter by category")
+        console.print("4. Total spent")
+        console.print("5. Dashboard")
+        console.print("6. Ask AI a question")
+        console.print("7. AI spending insights")
+        console.print("8. Monthly report + PDF export")
+        console.print("9. Exit")
+
+        choice = input("\nEnter your choice (1-9): ").strip()
+
+        if choice == "1":
+            add_expense()
+        elif choice == "2":
+            view_expenses()
+        elif choice == "3":
+            filter_by_category()
+        elif choice == "4":
+            total_spent()
+        elif choice == "5":
+            show_dashboard()
+        elif choice == "6":
+            natural_language_query()
+        elif choice == "7":
+            ai_spending_insights()
+        elif choice == "8":
+            generate_monthly_report()
+        elif choice == "9":
+            console.print("[cyan]Goodbye![/cyan]")
+            break
+        else:
+            console.print("[red]Invalid choice. Please enter a number between 1-9.[/red]")
+
+# Run the program
+main()
